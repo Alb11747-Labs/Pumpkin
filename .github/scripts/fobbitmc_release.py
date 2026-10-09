@@ -314,8 +314,8 @@ def collect(component, target):
     shutil.copy2(products / target / "release" / filenames[component], DIST / filenames[component])
     if component == "bridge":
         shutil.copy2(ROOT / "bridge/java/patchbukkit/build/libs/patchbukkit.jar", DIST / "patchbukkit.jar")
-    # This is a fixed, task-owned directory on an ephemeral GitHub-hosted runner.
-    shutil.rmtree(products)
+    # Blacksmith's larger disk lets later components reuse shared dependency products.
+    # The target directory remains local to this ephemeral job, outside the download cache.
 
 
 def manifest(target):

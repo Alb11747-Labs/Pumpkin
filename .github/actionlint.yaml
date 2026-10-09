@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - blacksmith-8vcpu-ubuntu-2204
+    - blacksmith-8vcpu-windows-2025

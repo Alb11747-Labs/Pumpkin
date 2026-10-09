@@ -1,4 +1,4 @@
-name: FobbitMC pinned release artifacts
+name: FobbitMC Blacksmith pinned release artifacts
 
 on:
   workflow_dispatch:
@@ -48,7 +48,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_BUILD_JOBS: 2
+  # Leave memory headroom for linking on the 28 GB Windows runner.
+  CARGO_BUILD_JOBS: 6
   CARGO_INCREMENTAL: 0
   CARGO_PROFILE_RELEASE_OPT_LEVEL: 3
   CARGO_PROFILE_RELEASE_LTO: "false"
@@ -68,7 +69,7 @@ env:
 
 jobs:
   release:
-    if: github.repository == 'Alb11747/Pumpkin'
+    if: github.repository == 'Alb11747-Labs/Pumpkin'
     name: Matched release (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 360
@@ -76,9 +77,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: blacksmith-8vcpu-ubuntu-2204
             target: x86_64-unknown-linux-gnu
-          - os: windows-2025
+          - os: blacksmith-8vcpu-windows-2025
             target: x86_64-pc-windows-msvc
     defaults:
       run:
@@ -113,6 +114,8 @@ jobs:
       - name: Checkout exact engine
         uses: actions/checkout@v7
         with:
+          # The migration's source and plugin dependency pins remain canonical here.
+          repository: Alb11747/Pumpkin
           ref: ${{ inputs.engine_sha }}
           path: engine
           persist-credentials: false
@@ -137,6 +140,19 @@ jobs:
         with:
           java-version: "25"
           distribution: zulu
+      - name: Cache Cargo downloads and Gradle dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: fobbitmc-downloads-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('engine/Cargo.lock', 'bridge/rust/Cargo.lock', 'bridge/java/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            fobbitmc-downloads-${{ matrix.target }}-${{ env.RUST_TOOLCHAIN }}-
       - name: Verify sources, engine pins and native API; prepare optional exporter
         run: python build-control/.github/scripts/fobbitmc_release.py prepare '${{ matrix.target }}'
       - name: Prove the test-only baseline fails on the autosave assertion
@@ -279,7 +295,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fobbitmc-release-target
         run: cargo +"$RUST_TOOLCHAIN" test --locked --release --target '${{ matrix.target }}' -p pumpkin-core --test player_persistence -- player_persistence_preserves_air_and_updates_independent_historical_xp --exact
-      - name: Retain engine and release its temporary Cargo products
+      - name: Retain engine and shared Cargo products
         run: python build-control/.github/scripts/fobbitmc_release.py collect engine '${{ matrix.target }}'
       - name: Build bridge JAR and verify death mapping before embedding it in the native library
         working-directory: bridge/java
@@ -294,7 +310,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fobbitmc-release-target
         run: cargo +"$RUST_TOOLCHAIN" test --locked --release --target '${{ matrix.target }}' --lib
-      - name: Retain bridge and embedded JAR; release temporary Cargo products
+      - name: Retain bridge, embedded JAR and shared Cargo products
         run: python build-control/.github/scripts/fobbitmc_release.py collect bridge '${{ matrix.target }}'
       - name: Build optimized native exporter
         if: inputs.build_exporter
@@ -306,7 +322,7 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fobbitmc-release-target
         run: cargo +"$RUST_TOOLCHAIN" test --manifest-path "$RUNNER_TEMP/fobbitmc-bluemap/Cargo.toml" --locked --release --target '${{ matrix.target }}' --lib
-      - name: Retain exporter and release temporary Cargo products
+      - name: Retain exporter and shared Cargo products
         if: inputs.build_exporter
         run: python build-control/.github/scripts/fobbitmc_release.py collect exporter '${{ matrix.target }}'
       - name: Verify Linux glibc ceiling and write artifact manifest
