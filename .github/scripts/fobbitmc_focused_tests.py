@@ -11,8 +11,9 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 
-# These names come from the b5 engine and the advance-anvil, shulker-dispenser,
-# and vehicle patches. A source pin without the integrated tests must fail.
+# These names come from the b5 engine, the advance-anvil, shulker-dispenser,
+# vehicle patches, and tropical-fish variant/name correction. A source pin
+# without the integrated tests must fail.
 RUST_TESTS = {
     "pumpkin-world": (
         "chunk::format::anvil::tests::a_chunk_declaring_no_length_is_an_error_not_a_panic",
@@ -43,6 +44,11 @@ RUST_TESTS = {
         "world::entity_storage::tests::loaded_pufferfish_dimensions_keep_unpuffed_eye_out_of_adjacent_dirt",
         "world::entity_storage::tests::imported_diodes_survive_all_hopper_states_and_disk_reload",
         "world::entity_storage::tests::unsupported_diodes_still_break_and_drop_one_item",
+        "world::entity_storage::tests::tropical_fish_bucket_capture_relog_release_preserves_variant_and_name",
+    ),
+    "pumpkin-protocol": (
+        "codec::data_component::tests::tropical_fish_components_use_vanilla_packed_pattern_and_color_wire",
+        "codec::data_component::tests::tropical_fish_components_reject_unknown_names_and_default_unknown_wire_ids",
     ),
 }
 
