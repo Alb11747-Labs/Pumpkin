@@ -12,8 +12,8 @@ import xml.etree.ElementTree as ET
 
 
 # These names come from the b5 engine, the advance-anvil, shulker-dispenser,
-# vehicle patches, and tropical-fish variant/name correction. A source pin
-# without the integrated tests must fail.
+# vehicle patches, tropical-fish variant/name correction, and native spectator
+# action repair. A source pin without the integrated tests must fail.
 RUST_TESTS = {
     "pumpkin-world": (
         "chunk::format::anvil::tests::a_chunk_declaring_no_length_is_an_error_not_a_panic",
@@ -49,6 +49,9 @@ RUST_TESTS = {
     "pumpkin-protocol": (
         "codec::data_component::tests::tropical_fish_components_use_vanilla_packed_pattern_and_color_wire",
         "codec::data_component::tests::tropical_fish_components_reject_unknown_names_and_default_unknown_wire_ids",
+        "java::server::play::spectator_action::tests::spectator_action_26_3_known_bytes",
+        "java::server::play::spectator_action::tests::spectator_action_rejects_empty_and_truncated_varint",
+        "java::server::play::spectator_action::tests::legacy_uuid_spectate_does_not_claim_native_action",
     ),
 }
 
