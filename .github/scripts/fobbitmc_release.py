@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tomllib
 
+sys.dont_write_bytecode = True
+from fobbitmc_head_source import source_provenance
+
 
 ROOT = Path.cwd()
 TEMP = Path(os.environ["RUNNER_TEMP"])
@@ -28,15 +31,7 @@ def sha256(path):
 
 
 def git_source(path, expected):
-    actual = command("git", "rev-parse", "HEAD", cwd=path)
-    if actual != expected:
-        raise ValueError(f"Source commit mismatch: {path.name}")
-    files = command("git", "ls-files", cwd=path).splitlines()
-    return {
-        "commit": actual,
-        "tree": command("git", "rev-parse", "HEAD^{tree}", cwd=path),
-        "files": {name: sha256(path / name) for name in files},
-    }
+    return source_provenance(path, expected)
 
 
 def verify_pins(path, expected_count):
@@ -73,6 +68,7 @@ def prepare(target):
         "runner": {key: os.environ.get(key) for key in
                    ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")},
     }
+    state["buildControl"] = git_source(ROOT / "build-control", state["workflowCommit"])
     if os.environ["BUILD_EXPORTER"] == "true":
         source = ROOT / "build-control/.github/build-sources/fobbitmc-bluemap"
         provenance = json.loads(source.with_suffix(".json").read_text(encoding="utf-8"))
@@ -320,6 +316,17 @@ def collect(component, target):
 
 def manifest(target):
     state = json.loads(STATE.read_text(encoding="utf-8"))
+    for component in ("engine", "bridge", "buildControl"):
+        directory = "build-control" if component == "buildControl" else component
+        if git_source(ROOT / directory, state[component]["commit"]) != state[component]:
+            raise ValueError(f"Build changed verified source: {component}")
+    if "exporter" in state:
+        source = TEMP / "fobbitmc-bluemap"
+        expected = state["exporter"]["files"]
+        actual = {path.relative_to(source).as_posix(): sha256(path)
+                  for path in source.rglob("*") if path.is_file()}
+        if actual != expected:
+            raise ValueError("Compiled exporter differs from verified input")
     state["artifacts"] = {path.name: {"sha256": sha256(path), "bytes": path.stat().st_size}
                           for path in sorted(DIST.iterdir())}
     if target.endswith("linux-gnu"):

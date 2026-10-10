@@ -1,0 +1,150 @@
+name: FobbitMC bounded Blacksmith build and focused regressions
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_sha:
+        description: Exact 40-character integrated Alb11747/Pumpkin commit
+        required: true
+        type: string
+      bridge_sha:
+        description: Exact 40-character Alb11747/PatchBukkit commit pinned to engine_sha
+        required: true
+        type: string
+      exporter_sha:
+        description: Exact exporter commit in the reviewed vendored source provenance
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fobbitmc-pro-smoke-${{ github.ref }}-${{ inputs.engine_sha }}-${{ inputs.bridge_sha }}-${{ inputs.exporter_sha }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 6
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_RELEASE_OPT_LEVEL: 3
+  CARGO_PROFILE_RELEASE_LTO: "false"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 16
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  CARGO_PROFILE_RELEASE_STRIP: debuginfo
+  RUSTFLAGS: ""
+  RUST_TOOLCHAIN: 1.99.0
+  TARGET: x86_64-unknown-linux-gnu
+  ENGINE_SHA: ${{ inputs.engine_sha }}
+  BRIDGE_SHA: ${{ inputs.bridge_sha }}
+  EXPORTER_SHA: ${{ inputs.exporter_sha }}
+  BUILD_EXPORTER: "true"
+
+jobs:
+  combined:
+    if: github.repository == 'Alb11747-Labs/Pumpkin'
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    timeout-minutes: 55
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Validate immutable source inputs
+        run: |
+          [[ "$ENGINE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BRIDGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPORTER_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout exact workflow and verification helpers
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: build-control
+          persist-credentials: false
+      - name: Checkout exact engine
+        uses: actions/checkout@v7
+        with:
+          repository: Alb11747/Pumpkin
+          ref: ${{ inputs.engine_sha }}
+          path: engine
+          persist-credentials: false
+          submodules: recursive
+      - name: Checkout exact bridge
+        uses: actions/checkout@v7
+        with:
+          repository: Alb11747/PatchBukkit
+          ref: ${{ inputs.bridge_sha }}
+          path: bridge
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          java-version: "25"
+          distribution: zulu
+      - name: Restore only bounded-lane dependency downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+            ~/.cargo/git/db
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          # Never restore retired local caches or target products. All native
+          # components share one fresh RUNNER_TEMP target for this job only.
+          key: fobbitmc-pro-smoke-downloads-${{ env.TARGET }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('engine/Cargo.lock', 'bridge/rust/Cargo.lock', 'build-control/.github/build-sources/fobbitmc-bluemap/Cargo.lock', 'bridge/java/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            fobbitmc-pro-smoke-downloads-${{ env.TARGET }}-${{ env.RUST_TOOLCHAIN }}-
+      - name: Install exact Rust and verify sources, pins, source hashes and API7
+        timeout-minutes: 8
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "$TARGET"
+          rustup default "$RUST_TOOLCHAIN"
+          python build-control/.github/scripts/fobbitmc_release.py prepare "$TARGET"
+      - name: Build four artifacts and run only the selected regressions
+        timeout-minutes: 44
+        run: |
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/fobbitmc-release-target"
+          # Leave time to retain diagnostics and upload within the 55-minute job.
+          # A cold compile exceeding this budget fails; never start a longer lane.
+          timeout --signal=TERM --kill-after=30s 42m bash <<'BUILD'
+          set -euo pipefail
+          python build-control/.github/scripts/fobbitmc_focused_tests.py rust "$TARGET"
+          (cd engine && timeout --signal=TERM --kill-after=30s 15m cargo +"$RUST_TOOLCHAIN" build --locked --release --target "$TARGET" -p pumpkin) 2>&1 | tee "$RUNNER_TEMP/build-engine-$TARGET.log"
+          python build-control/.github/scripts/fobbitmc_release.py collect engine "$TARGET"
+          # The JAR must exist before Cargo embeds it into libpatchbukkit.so.
+          python build-control/.github/scripts/fobbitmc_focused_tests.py java "$TARGET"
+          (cd bridge/rust && timeout --signal=TERM --kill-after=30s 15m cargo +"$RUST_TOOLCHAIN" build --locked --release --target "$TARGET" --lib) 2>&1 | tee "$RUNNER_TEMP/build-bridge-$TARGET.log"
+          cmp bridge/java/patchbukkit/build/libs/patchbukkit.jar bridge/rust/resources/jassets/patchbukkit.jar
+          python build-control/.github/scripts/fobbitmc_release.py collect bridge "$TARGET"
+          timeout --signal=TERM --kill-after=30s 10m cargo +"$RUST_TOOLCHAIN" build --manifest-path "$RUNNER_TEMP/fobbitmc-bluemap/Cargo.toml" --locked --release --target "$TARGET" --lib 2>&1 | tee "$RUNNER_TEMP/build-exporter-$TARGET.log"
+          python build-control/.github/scripts/fobbitmc_release.py collect exporter "$TARGET"
+          python build-control/.github/scripts/fobbitmc_release.py verify_engine
+          [[ "$(find dist -mindepth 1 -maxdepth 1 | wc -l)" -eq 4 ]]
+          for artifact in pumpkin patchbukkit.jar libpatchbukkit.so libfobbitmc_bluemap.so; do
+            [[ -s "dist/$artifact" && -f "dist/$artifact" ]]
+          done
+          # Keep the helper's artifact hashes and readelf GLIBC <= 2.35 gate.
+          python build-control/.github/scripts/fobbitmc_release.py manifest "$TARGET"
+          BUILD
+      - name: Upload code artifacts and source provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: fobbitmc-pro-smoke-${{ env.TARGET }}-${{ inputs.engine_sha }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Retain focused test and build evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fobbitmc-pro-smoke-logs-${{ env.TARGET }}-${{ inputs.engine_sha }}
+          path: |
+            ${{ runner.temp }}/*-${{ env.TARGET }}.log
+            ${{ runner.temp }}/fobbitmc-provenance.json
+            bridge/java/patchbukkit/build/test-results/test/TEST-*.xml
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30
